@@ -1,0 +1,82 @@
+
+
+# --- Audio / voice (may be personal) ---
+# --- Data & PHI: never publish ---
+# --- Databases with real content ---
+# --- Model weights ---
+# --- Python / Node / OS ---
+# --- Secrets ---
+# Generated .mind artifacts (regenerate from code/data; not source of truth)
+# Generated registry (rebuilt from agents/schema.sql + agents/seed.sql)
+# OS
+# Python
+*.bdf
+*.ckpt
+*.db
+*.edf
+*.egg-info/
+*.egg-info/
+*.env
+*.fif
+*.flac
+*.gnos
+*.gnos-journal
+*.gnos-shm
+*.gnos-wal
+*.h5
+*.key
+*.m4a
+*.mgz
+*.mp3
+*.nii
+*.nii.gz
+*.ogg
+*.onnx
+*.pem
+*.pt
+*.pth
+*.py[cod]
+*.py[cod]
+*.safetensors
+*.set
+*.sqlite
+*.sqlite3
+*.token
+*.wav
+.DS_Store
+.DS_Store
+.eggs/
+.env
+.idea/
+.ipynb_checkpoints/
+.pytest_cache/
+.pytest_cache/
+.venv/
+.venv/
+.vscode/
+Thumbs.db
+Thumbs.db
+__pycache__/
+__pycache__/
+agents/registry.db
+audio/
+build/
+build/
+checkpoints/
+data/
+derivatives/
+dist/
+dist/
+enroll/
+enrollment/
+env/
+id_rsa*
+models/
+node_modules/
+outputs/
+recordings/
+registry.db
+samples/
+venv/
+venv/
+weights/
