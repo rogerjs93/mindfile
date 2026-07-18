@@ -1,0 +1,33 @@
+[project]
+name = "mindfile-mcp"
+version = "0.1.0"
+description = "MCP server for the mindfile (.gnos) AI-native file format: create, fill, search, summarize, checkpoint, and audit .mind files."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "rogerjs93" }]
+keywords = ["mcp", "mindfile", "embeddings", "vector-database", "integrity"]
+dependencies = [
+  "mcp[cli]>=1.2",
+  "mindfile",
+]
+
+[project.scripts]
+mindfile-mcp = "mindfile_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mindfile_mcp"]
+
+# mindfile lives in the parent repo (this mcp/ is a subdirectory of it).
+[tool.uv.sources]
+mindfile = { path = "../", editable = true }
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
