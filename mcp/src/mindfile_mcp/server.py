@@ -8,6 +8,7 @@ Uses the dependency-free HashEmbedder by default, so no ML model download is req
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -167,6 +168,65 @@ def audit(path: str, deep: bool = False) -> dict:
         result = audit_mod.audit(mf, deep=deep)
         mf.close()
         return result
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)}
+
+
+# ----------------------------------------------------------------- bridge / one-shot
+
+@mcp.tool()
+def seal_bundle(
+    mind_path: str,
+    files: Optional[list[str]] = None,
+    from_dir: Optional[str] = None,
+    pattern: str = "*.json",
+    modality: str = "generic",
+    checkpoint_name: Optional[str] = None,
+    space: Optional[str] = None,
+    overwrite: bool = False,
+) -> dict:
+    """Seal a set of technical output files into a verifiable .gnos bundle, in one call.
+
+    Ideal for capturing another tool's run (e.g. a neuro-orchestrator `process_dataset` run: its
+    group-stats and per-subject JSON outputs). Creates (or appends to) the mindfile, folds in the
+    files as a searchable container, adds an immutable checkpoint (the "seal"), and audits it.
+
+    Provide `files` (explicit paths) and/or `from_dir` + `pattern` (e.g. an outputs/ folder of
+    JSONs, searched recursively). Returns the created path, files added, checkpoint, audit verdict,
+    and a summary.
+    """
+    try:
+        collected: list[str] = list(files or [])
+        if from_dir:
+            base = Path(from_dir)
+            if base.is_dir():
+                collected += [str(p) for p in sorted(base.rglob(pattern)) if p.is_file()]
+        collected = [f for f in dict.fromkeys(collected) if Path(f).is_file()]
+        if not collected:
+            return {"error": "no files to seal (pass files=[...] and/or from_dir=... with a matching pattern)"}
+
+        if overwrite or not Path(mind_path).exists():
+            created = create_mindfile(mind_path, modality=modality, overwrite=overwrite)
+            if "error" in created:
+                return created
+
+        added = add_files(mind_path, collected, space=space)
+        if "error" in added:
+            return added
+
+        name = checkpoint_name or f"sealed-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}"
+        cp = checkpoint(mind_path, name)
+        aud = audit(mind_path)
+        summ = summarize(mind_path)
+        return {
+            "mind_path": mind_path,
+            "sealed": "error" not in cp,
+            "files_added": added.get("added"),
+            "files": added.get("files"),
+            "checkpoint": name if "error" not in cp else cp,
+            "audit": aud.get("status", aud),
+            "summary_text": summ.get("text"),
+        }
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)}
 

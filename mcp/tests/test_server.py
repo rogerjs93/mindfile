@@ -49,3 +49,28 @@ def test_info_rejects_non_mindfile(tmp_path):
     f = tmp_path / "plain.txt"
     f.write_text("not a mindfile")
     assert "error" in server.info(str(f))
+
+
+def test_seal_bundle_from_dir(tmp_path):
+    # simulate a run's output folder of technical JSONs (like orchestrator outputs)
+    out = tmp_path / "outputs" / "group"
+    out.mkdir(parents=True)
+    (out / "group_network_a.json").write_text(json.dumps({"comparison": "A vs B", "n_significant": 3}))
+    (out / "group_fc_b.json").write_text(json.dumps({"comparison": "A vs B", "n_significant": 0}))
+
+    res = server.seal_bundle(str(tmp_path / "run.gnos"), from_dir=str(tmp_path / "outputs"))
+    assert "error" not in res, res
+    assert res["sealed"] is True
+    assert res["files_added"] == 2
+    assert res["audit"] == "ok"
+    assert isinstance(res["summary_text"], str) and res["summary_text"]
+
+    # sealing again (append) with a distinct auto-named checkpoint must not collide
+    res2 = server.seal_bundle(str(tmp_path / "run.gnos"),
+                              files=[str(out / "group_network_a.json")])
+    assert "error" not in res2, res2
+    assert res2["sealed"] is True
+
+
+def test_seal_bundle_needs_files(tmp_path):
+    assert "error" in server.seal_bundle(str(tmp_path / "empty.gnos"), from_dir=str(tmp_path))
