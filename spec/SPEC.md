@@ -1,4 +1,4 @@
-# The `.gnos` format specification (v1.1.0, schema v14)
+# The `.gnos` format specification (v1.1.0, schema v16)
 
 A `.gnos` file is an ordinary **SQLite** database (byte-compatible with
 libSQL/Turso). The canonical schema is `src/mindfile/schema.sql`; this document
@@ -21,6 +21,8 @@ explains the blocks and the invariants a conforming reader/writer must uphold.
 | Compact codes | `vector_codes` | lossless compressed forms of derived vectors (kind `compressed`); reconstruct byte-identically. Only `spaces.derived=1` may be compacted |
 | Signals | `signals` | lossless waveform store (channels x time); reconstructs byte-exact on call; band-power vectors are lazy `signal_feature` recipes recomputed from it. The `digital-cal` codec stores an EDF's exact **int16 digital** samples plus per-channel SI calibration (embedded in `code`, so `code_sha256` covers it) and reconstructs physical volts on call — more faithful to the source file and far smaller than storing pre-scaled floats |
 | Events | `events` | task/stimulus markers (`onset` [s], `duration`, `condition`, `value`, `label`) attached to a signal recording, so event-locked dynamics (baseline-normalised **ERD**, hemispheric lateralisation) can be computed from the stored waveform on call |
+| Files | `files` | lossless container for a whole processing-output tree (e.g. a FreeSurfer `recon-all` subject): one row per file with `raw_sha256` of the ORIGINAL bytes, the stored `code`, and a structure-aware `codec`. Gzip containers (`.mgz`) are unwrapped and re-emitted byte-exactly; MGH volumes are neighbour-predicted; volumes/surfaces that mirror another file are delta-coded against it (`meta.ref` → `files.id`, depth 1). A codec may only be used if it decodes back to `raw_sha256` at store time |
+| Solid blocks | `file_blocks` | several `files` coded as ONE LZMA stream, for files no structural codec fits but that compress well together (many small labels; two near-duplicate outputs). Members record `block_id` + `(block_offset, block_length)` and carry `code_sha256=''`, the block's hash standing in for theirs. Blocks are bounded (few members / capped bytes) because a corrupt block invalidates every member — the same blast radius a depth-1 delta already implies — and are only used when measurably smaller than independent coding |
 | Allocation | `plans`, `plan_actions` | Planner→Reviewer→Renderer log (proposed/reviewed/rendered) |
 | Correlations | `correlations` | in-file statistics (ARI / cross-space / feature / subject-cross-modality) |
 | Signatures | `signatures` | Ed25519/HMAC signatures over the `state_root` (uuid+schema+history head+latest checkpoint root) — authenticity on top of integrity |
@@ -28,7 +30,7 @@ explains the blocks and the invariants a conforming reader/writer must uphold.
 | File refs | `file_refs` | cross-file registry: pins another `.gnos`'s uuid + state_root + signing key; `verify_refs` detects missing/substituted/drifted/unsigned |
 | Agent | `agents` | self-update policies + the 3 allocation roles |
 | History | `history` | append-only event log, **hash-chained** (`prev_hash`/`entry_hash`) so the provenance trail is tamper-evident; head pinned in `mind_meta` |
-| Save points | `checkpoints`, `checkpoint_items`, `checkpoint_vectors`, `checkpoint_signals`, `checkpoint_defs` | immutable content-hashed manifest of the COMPLETE state: payloads, vectors, waveforms, and virtual-vector recipes |
+| Save points | `checkpoints`, `checkpoint_items`, `checkpoint_vectors`, `checkpoint_signals`, `checkpoint_defs`, `checkpoint_files` | immutable content-hashed manifest of the COMPLETE state: payloads, vectors, waveforms, virtual-vector recipes, and stored tree files |
 
 ## Invariants
 

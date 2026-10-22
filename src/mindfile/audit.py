@@ -20,6 +20,7 @@ import hashlib
 from . import checkpoint as _cp
 from . import fuse as _fuse
 from . import lazy as _lazy
+from . import reconall as _reconall
 from . import sign as _sign
 from . import signal as _signal
 from . import validate as _validate
@@ -44,6 +45,9 @@ def _deep_resolve(mf: MindFile) -> dict:
             _signal.load_signal(mf, r["item_id"], verify=True)
         except Exception as e:
             bad.append({"item_id": r["item_id"], "space": "<signal>", "issue": str(e)})
+    for f in _reconall.verify_files(mf, deep=True)["bad"]:   # decode the whole tree
+        bad.append({"item_id": f["item_id"], "space": f"<file:{f['path']}>",
+                    "issue": f["issue"]})
     return {"status": "ok" if not bad else "corrupted", "bad": bad}
 
 
@@ -78,6 +82,7 @@ def audit(mf: MindFile, *, deep: bool = False) -> dict:
         "derivations": _fuse.verify_derivations(mf),  # fused points vs source bytes
         "defs": _lazy.verify_defs(mf),             # lazy recipes vs their inputs
         "signals": _signal.verify_signals(mf),     # waveforms reconstruct exactly
+        "files": _reconall.verify_files(mf),       # stored trees (recon-all) intact
         "history": verify_history(mf),             # provenance chain unbroken
         "signatures": _sign.verify_signatures(mf),  # authenticity (Ed25519 self-verifies)
         "validation": _validate.validate(mf),      # structure/semantics
@@ -88,8 +93,8 @@ def audit(mf: MindFile, *, deep: bool = False) -> dict:
     if deep:
         checks["deep"] = _deep_resolve(mf)
 
-    corrupted = [k for k in ("integrity", "derivations", "defs", "signals", "history",
-                             "signatures")
+    corrupted = [k for k in ("integrity", "derivations", "defs", "signals", "files",
+                             "history", "signatures")
                  if checks[k]["status"] != "ok"]
     corrupted += [f"checkpoint:{n}" for n, r in checkpoints.items() if r["status"] != "ok"]
     if deep and checks["deep"]["status"] != "ok":

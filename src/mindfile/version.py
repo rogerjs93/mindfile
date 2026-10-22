@@ -7,7 +7,7 @@ can import them without circular-import headaches.
 FORMAT_NAME = "mindfile"
 # Bump FORMAT_VERSION for spec/behaviour changes; SCHEMA_VERSION for table changes.
 FORMAT_VERSION = "1.1.0"
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 16
 EXTENSION = ".gnos"
 
 # In-content magic number (SQLite `PRAGMA application_id`) so a file

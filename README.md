@@ -70,11 +70,13 @@ modality.ingest(mf, "text",     "clinical note...",      subject_id="P1")  # tex
 modality.ingest(mf, "genomics", ["1:100:A:G", ...],      subject_id="P1")  # hashed variant vector
 modality.ingest(mf, "fhir",     observation_json,        subject_id="P1")  # FHIR resource
 modality.ingest(mf, "labs",     {"crp": 12, ...},        subject_id="P1")  # values + reference-range flags
+modality.ingest(mf, "reconall", "/subjects/sub-01",      subject_id="P1")  # whole recon-all tree, losslessly
 modality.catalog()    # every supported file type: spaces, card, extensions, deps
 ```
 
-**10 file types**, one uniform contract — `eeg` (EDF/BDF/FIF), `ecg`, `wfdb`,
-`mri` (NIfTI), `dicom`, `fhir`, `text`, `genomics`, `labs`, `tabular`. Each stores
+**11 file types**, one uniform contract — `eeg` (EDF/BDF/FIF), `ecg`, `wfdb`,
+`mri` (NIfTI), `dicom`, `fhir`, `text`, `genomics`, `labs`, `tabular`,
+`reconall`. Each stores
 its raw record verifiably, produces embedding space(s), and renders an LLM card.
 They all compose in one file (`examples/all_modalities_demo.py`); run
 `mind modalities` for the live catalog. Full table: [docs/FILE_TYPES.md](docs/FILE_TYPES.md).
@@ -287,6 +289,29 @@ signal.add_recording(mf, data, sfreq=500, ch_names=ch, subject_id="P1", embedder
 lazy.resolve(mf, item_id, "bandpower")   # recomputes band-power FROM the stored signal
 signal.load_signal(mf, item_id)          # exact waveform back; verify_signals() checks all
 ```
+
+## A whole processing tree, losslessly — `recon-all`
+
+A FreeSurfer `recon-all` subject is hundreds of files and up to a gigabyte, and
+generic archivers barely dent it because most of it is *already gzipped*. The
+`reconall` processor folds the entire tree into one `.gnos` using codecs that
+know what the bytes are: `.mgz` gzip members are unwrapped (and the settings to
+re-emit the identical stream stored), integer volumes are neighbour-predicted,
+surfaces sharing a topology are delta-coded against each other, and volumes that
+mirror another volume become a delta against it.
+
+```python
+item = modality.ingest(mf, "reconall", "/subjects/sub-01", subject_id="sub-01")
+reconall.restore_subject(mf, item, "/tmp/sub-01")   # byte-identical tree back
+reconall.verify_files(mf, deep=True)                # every file reconstructs exactly
+```
+
+No codec is trusted: each candidate is decoded again at store time and must
+reproduce the file's SHA-256 before it can be used, so a parser bug can only cost
+ratio, never fidelity. Save points freeze every file's hashes, `verify_tree`
+pins the file *set*, and the stats tables become a searchable `morphometry`
+vector. An opt-in `profile="analysis"` drops the regenerable intermediates while
+still recording their hashes. Details: [docs/RECONALL.md](docs/RECONALL.md).
 
 ## Lazy / "dynamic" derived values
 

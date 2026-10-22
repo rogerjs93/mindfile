@@ -234,6 +234,58 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_item ON events(item_id);
 
+-- FILES (lossless container for a whole processing-output tree) --------------
+-- One row per file of an ingested directory tree (e.g. a FreeSurfer recon-all
+-- subject). `code` holds the file under a structure-aware lossless codec: gzip
+-- containers are unwrapped and re-emitted byte-exactly, MGH volumes are
+-- neighbour-predicted, surfaces are delta-coded against another surface with
+-- the same topology (`meta.ref` -> files.id). `raw_sha256` is the hash of the
+-- ORIGINAL file bytes, so restoring is provable; `code_sha256` covers what is
+-- actually stored, so in-place tamper is caught without a full decode.
+CREATE TABLE IF NOT EXISTS files (
+    id          INTEGER PRIMARY KEY,
+    item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    relpath     TEXT NOT NULL,        -- POSIX path relative to the tree root
+    size        INTEGER NOT NULL,     -- original size in bytes
+    codec       TEXT NOT NULL,        -- e.g. gz+mgh:pred:yzmed, surf:delta, xz
+    meta        TEXT,                 -- JSON codec parameters (incl. any ref)
+    code        BLOB NOT NULL,
+    code_bytes  INTEGER NOT NULL,
+    raw_sha256  TEXT NOT NULL,        -- hash of the original file bytes
+    code_sha256 TEXT NOT NULL,        -- hash of the stored code ('' for block members)
+    created_at  TEXT NOT NULL,
+    -- Set when this file lives inside a solid block instead of its own `code`.
+    block_id     INTEGER REFERENCES file_blocks(id),
+    block_offset INTEGER,
+    block_length INTEGER,
+    UNIQUE (item_id, relpath)
+);
+CREATE INDEX IF NOT EXISTS idx_files_item ON files(item_id);
+
+-- SOLID BLOCKS (cross-file redundancy for files no structural codec fits) -----
+-- Some files only compress well *together*: a directory of many small label
+-- files, or two near-duplicate outputs. Such files are coded as one LZMA stream
+-- and each member records its (offset, length) inside the decompressed block.
+-- Blocks are deliberately BOUNDED (few members / capped bytes): a corrupted
+-- block invalidates all of its members, so the blast radius is kept to roughly
+-- what a depth-1 delta already implies. A block is only used when it is
+-- measurably smaller than coding its members independently.
+CREATE TABLE IF NOT EXISTS file_blocks (
+    id          INTEGER PRIMARY KEY,
+    item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    codec       TEXT NOT NULL,        -- solid:xz
+    n_files     INTEGER NOT NULL,
+    raw_bytes   INTEGER NOT NULL,     -- total uncompressed member bytes
+    code        BLOB NOT NULL,
+    code_bytes  INTEGER NOT NULL,
+    code_sha256 TEXT NOT NULL,        -- tamper anywhere in the block flips this
+    -- A raw LZMA2 stream has no header: the decoder needs the encoder's window.
+    -- It spans the whole block, which is what makes cross-file matches findable.
+    dict_size   INTEGER,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_file_blocks_item ON file_blocks(item_id);
+
 -- TRUSTED KEYS (authenticity policy: which signers this file expects) --------
 CREATE TABLE IF NOT EXISTS trusted_keys (
     key_id     TEXT PRIMARY KEY,     -- public-key fingerprint
@@ -392,4 +444,13 @@ CREATE TABLE IF NOT EXISTS checkpoint_defs (
     kind          TEXT,
     source_sha256 TEXT,             -- virtual vector's recipe-source fingerprint
     PRIMARY KEY (checkpoint_id, item_id, space_id)
+);
+CREATE TABLE IF NOT EXISTS checkpoint_files (
+    checkpoint_id INTEGER NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+    file_id       INTEGER NOT NULL,
+    item_id       INTEGER NOT NULL,
+    relpath       TEXT NOT NULL,
+    raw_sha256    TEXT,             -- original file bytes
+    code_sha256   TEXT,             -- stored code (tamper flips this)
+    PRIMARY KEY (checkpoint_id, file_id)
 );

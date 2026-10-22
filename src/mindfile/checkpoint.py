@@ -21,9 +21,9 @@ def _space_names(mf: MindFile) -> dict[int, str]:
     return {r["id"]: r["name"] for r in mf.conn.execute("SELECT id, name FROM spaces")}
 
 
-def _manifest_root(item_rows, vector_rows, signal_rows=(), def_rows=()) -> str:
-    """Root hash over the complete frozen state: items, vectors, signals, and
-    virtual-vector recipes (sorted, prefixed by type)."""
+def _manifest_root(item_rows, vector_rows, signal_rows=(), def_rows=(), file_rows=()) -> str:
+    """Root hash over the complete frozen state: items, vectors, signals,
+    virtual-vector recipes, and stored files (sorted, prefixed by type)."""
     h = hashlib.sha256()
     for item_id, psha in sorted(item_rows, key=lambda r: r[0]):
         h.update(f"I\t{item_id}\t{psha or ''}\n".encode("utf-8"))
@@ -33,6 +33,8 @@ def _manifest_root(item_rows, vector_rows, signal_rows=(), def_rows=()) -> str:
         h.update(f"S\t{item_id}\t{csha or ''}\n".encode("utf-8"))
     for item_id, space_id, ssha in sorted(def_rows, key=lambda r: (r[0], r[1])):
         h.update(f"D\t{item_id}\t{space_id}\t{ssha or ''}\n".encode("utf-8"))
+    for file_id, rel, rsha, csha in sorted(file_rows, key=lambda r: r[0]):
+        h.update(f"F\t{file_id}\t{rel}\t{rsha or ''}\t{csha or ''}\n".encode("utf-8"))
     return h.hexdigest()
 
 
@@ -53,9 +55,17 @@ def create_checkpoint(
                 for r in mf.conn.execute(
         "SELECT item_id, space_id, kind, source_sha256 FROM vector_defs "
         "ORDER BY item_id, space_id")]
+    # For a file inside a solid block the meaningful stored hash is the block's,
+    # so tamper anywhere in that block breaks the save point for every member.
+    file_rows = [(r["id"], r["item_id"], r["relpath"], r["raw_sha256"], r["code_sha256"])
+                 for r in mf.conn.execute(
+        "SELECT f.id, f.item_id, f.relpath, f.raw_sha256, "
+        "COALESCE(b.code_sha256, f.code_sha256) AS code_sha256 "
+        "FROM files f LEFT JOIN file_blocks b ON b.id = f.block_id ORDER BY f.id")]
     root = _manifest_root(item_rows, vector_rows,
                           [(s[0], s[2]) for s in signal_rows],
-                          [(d[0], d[1], d[3]) for d in def_rows])
+                          [(d[0], d[1], d[3]) for d in def_rows],
+                          [(f[0], f[2], f[3], f[4]) for f in file_rows])
 
     cur = mf.conn.execute(
         "INSERT INTO checkpoints(name, created_at, item_count, vector_count, "
@@ -82,13 +92,20 @@ def create_checkpoint(
         "VALUES(?,?,?,?,?)",
         [(cp_id, iid, sid, kind, ssha) for iid, sid, kind, ssha in def_rows],
     )
+    mf.conn.executemany(
+        "INSERT INTO checkpoint_files(checkpoint_id, file_id, item_id, relpath, "
+        "raw_sha256, code_sha256) VALUES(?,?,?,?,?,?)",
+        [(cp_id, fid, iid, rel, rsha, csha) for fid, iid, rel, rsha, csha in file_rows],
+    )
     mf.record("checkpoint", {"name": name, "item_count": len(item_rows),
                              "vector_count": len(vector_rows), "signal_count": len(signal_rows),
-                             "def_count": len(def_rows), "manifest_sha256": root})
+                             "def_count": len(def_rows), "file_count": len(file_rows),
+                             "manifest_sha256": root})
     mf.conn.commit()
     return {"checkpoint_id": cp_id, "name": name, "item_count": len(item_rows),
             "vector_count": len(vector_rows), "signal_count": len(signal_rows),
-            "def_count": len(def_rows), "manifest_sha256": root}
+            "def_count": len(def_rows), "file_count": len(file_rows),
+            "manifest_sha256": root}
 
 
 def list_checkpoints(mf: MindFile) -> list[dict]:
@@ -119,6 +136,9 @@ def verify_checkpoint(mf: MindFile, name: str) -> dict:
     frozen_defs = mf.conn.execute(
         "SELECT item_id, space_id, kind, source_sha256 FROM checkpoint_defs WHERE checkpoint_id = ?",
         (cp["id"],)).fetchall()
+    frozen_files = mf.conn.execute(
+        "SELECT file_id, item_id, relpath, raw_sha256, code_sha256 FROM checkpoint_files "
+        "WHERE checkpoint_id = ?", (cp["id"],)).fetchall()
     names = _space_names(mf)
 
     changed: list[int] = []
@@ -126,6 +146,7 @@ def verify_checkpoint(mf: MindFile, name: str) -> dict:
     changed_vectors: list[dict] = []
     changed_signals: list[dict] = []
     changed_defs: list[dict] = []
+    changed_files: list[dict] = []
 
     for r in frozen_items:
         row = mf.conn.execute("SELECT payload FROM items WHERE id = ?", (r["item_id"],)).fetchone()
@@ -171,20 +192,44 @@ def verify_checkpoint(mf: MindFile, name: str) -> dict:
             changed_defs.append({"item_id": r["item_id"],
                                  "space": names.get(r["space_id"]), "issue": "changed"})
 
+    # Stored tree files: the code hash catches in-place tamper AND substitution
+    # of a re-hashed replacement, without decoding hundreds of megabytes.
+    for r in frozen_files:
+        row = mf.conn.execute(
+            "SELECT f.code, f.raw_sha256, f.block_id, b.code AS block_code "
+            "FROM files f LEFT JOIN file_blocks b ON b.id = f.block_id "
+            "WHERE f.id = ?", (r["file_id"],)).fetchone()
+        if row is None:
+            changed_files.append({"path": r["relpath"], "issue": "missing"})
+            continue
+        if row["block_id"] is not None:
+            if row["block_code"] is None:
+                changed_files.append({"path": r["relpath"], "issue": "missing"})
+                continue
+            live = _vec.sha256_bytes(row["block_code"])
+        else:
+            live = _vec.sha256_bytes(row["code"])
+        if live != r["code_sha256"] or row["raw_sha256"] != r["raw_sha256"]:
+            changed_files.append({"path": r["relpath"], "issue": "changed"})
+
     recomputed = _manifest_root(
         [(r["item_id"], r["payload_sha256"]) for r in frozen_items],
         [(r["item_id"], r["space_id"], r["vec_sha256"]) for r in frozen_vecs],
         [(r["item_id"], r["code_sha256"]) for r in frozen_signals],
-        [(r["item_id"], r["space_id"], r["source_sha256"]) for r in frozen_defs])
+        [(r["item_id"], r["space_id"], r["source_sha256"]) for r in frozen_defs],
+        [(r["file_id"], r["relpath"], r["raw_sha256"], r["code_sha256"])
+         for r in frozen_files])
     manifest_ok = recomputed == cp["manifest_sha256"]
 
     ok = (not changed and not missing and not changed_vectors and not changed_signals
-          and not changed_defs and manifest_ok)
+          and not changed_defs and not changed_files and manifest_ok)
     return {"name": name, "status": "ok" if ok else "corrupted",
             "checked_items": len(frozen_items), "checked_vectors": len(frozen_vecs),
             "checked_signals": len(frozen_signals), "checked_defs": len(frozen_defs),
+            "checked_files": len(frozen_files),
             "changed": changed, "missing": missing, "changed_vectors": changed_vectors,
             "changed_signals": changed_signals, "changed_defs": changed_defs,
+            "changed_files": changed_files,
             "manifest_ok": manifest_ok, "manifest_sha256": cp["manifest_sha256"]}
 
 

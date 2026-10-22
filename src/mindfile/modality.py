@@ -76,6 +76,8 @@ _CATALOG_META = {
     "labs": {"exts": [".csv", "dict"], "storage": "row JSON + reference-range flags",
              "deps": []},
     "tabular": {"exts": [".csv", "dict", "array"], "storage": "row JSON", "deps": []},
+    "reconall": {"exts": ["subject directory"], "storage": "lossless file tree "
+                 "(structure-aware codecs) + stats-derived morphometry", "deps": []},
 }
 
 
@@ -598,8 +600,41 @@ class WFDBProcessor:
         return data, sfreq, ch_names
 
 
+# -- FreeSurfer recon-all subject tree (a whole directory, losslessly) -------
+class ReconAllProcessor:
+    """Ingest a whole ``recon-all`` subject directory as one verifiable record.
+
+    The tree is stored losslessly (see :mod:`mindfile.reconall`) and the stats
+    tables recon-all already produced become a fixed-dimension ``morphometry``
+    vector, so the subject is searchable and comparable across subjects without
+    unpacking a single volume.
+    """
+
+    modality = "reconall"
+    spaces = ["morphometry"]
+
+    def __init__(self, profile: str = "lossless", effort: str = "balanced"):
+        self.profile = profile
+        self.effort = effort
+
+    def ingest(self, mf, source, *, profile=None, effort=None, progress=None,
+               **identity) -> int:
+        from . import ingest as _ingest
+        from . import reconall as _recon
+        rep = _recon.store_subject(
+            mf, source, subject_id=identity.get("subject_id"),
+            session_id=identity.get("session_id"), study_id=identity.get("study_id"),
+            profile=profile or self.profile, effort=effort or self.effort,
+            progress=progress)
+        item = rep["item_id"]
+        vec = _recon.morphometry_vector(_recon.read_stats(mf, item))
+        _ingest.add_space_vectors(mf, [item], vec[None, :], space="morphometry")
+        return item
+
+
 for _p in (EEGProcessor(), ECGProcessor(), TextProcessor(), MRIProcessor(),
            GenomicsProcessor(), FHIRProcessor(), DICOMProcessor(), WFDBProcessor(),
+           ReconAllProcessor(),
            TabularProcessor(modality="labs", space="labs"),
            TabularProcessor(modality="tabular", space="tabular")):
     register(_p)

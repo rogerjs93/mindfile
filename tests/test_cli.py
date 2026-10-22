@@ -32,7 +32,7 @@ def built(tmp_path, capsys):
 
 def test_modalities_lists_every_type(capsys):
     out, code = run(capsys, "modalities")
-    assert code == 0 and "10 supported file types" in out
+    assert code == 0 and "11 supported file types" in out
     for m in ("eeg", "dicom", "fhir", "labs", "genomics", "wfdb", "tabular"):
         assert m in out
 

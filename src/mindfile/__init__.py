@@ -11,8 +11,8 @@ from __future__ import annotations
 from . import (agents, allocate, analyze, audit, axes, checkpoint, cluster,
                collections, constellation, ecg_features, events, evolve, findings,
                fuse, graph, index,
-               ingest, labs, lazy, modality, query, radiomics, registry, render,
-               retrieve, sign, signal, spaces, stats, summary, validate)
+               ingest, labs, lazy, modality, query, radiomics, reconall, registry,
+               render, retrieve, sign, signal, spaces, stats, summary, validate)
 from .embedders import (CallableEmbedder, Embedder, HashEmbedder,
                         SentenceTransformerEmbedder)
 from .file import MindFile, is_mindfile
@@ -40,6 +40,7 @@ __all__ = [
     "audit",
     "analyze",
     "modality",
+    "reconall",
     "fuse",
     "axes",
     "constellation",

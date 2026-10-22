@@ -7,6 +7,10 @@
     mind graph   <file> [--k K] [--space S]
     mind query   <file> (--item ID | --text STR | --npy q.npy) [--k K] [--space S]
     mind explain <file> --item ID [--space S]
+    mind recon-store   <file> <subject_dir> [--profile lossless|analysis] [--effort E]
+    mind recon-restore <file> <dest> --item ID     # rebuild the tree byte-for-byte
+    mind recon-files   <file> --item ID
+    mind recon-verify  <file> [--item ID] [--deep]
     mind checkpoint <file> NAME [--note N]
     mind verify  <file> [NAME]          # NAME -> verify save point; else byte integrity
     mind validate <file>                # semantic / structural validation
@@ -34,6 +38,7 @@ from . import graph as _graph
 from . import ingest as _ingest
 from . import lazy as _lazy
 from . import query as _query
+from . import reconall as _reconall
 from . import registry as _registry
 from . import render as _render
 from . import retrieve as _retrieve
@@ -272,6 +277,51 @@ def cmd_refs(a) -> None:
     sys.exit(0 if rep["status"] == "ok" else 1)
 
 
+def cmd_recon_store(a) -> None:
+    from . import modality as _modality
+    with MindFile.open(a.file) as mf:
+        def show(n, total, rel, raw, code):
+            if a.verbose:
+                print(f"  [{n}/{total}] {rel} {raw/1e6:.2f}MB -> {code/1e6:.2f}MB")
+        item = _modality.get("reconall").ingest(
+            mf, a.subject_dir, profile=a.profile, effort=a.effort,
+            subject_id=a.subject_id, progress=show)
+        rep = _reconall.manifest(mf, item)
+    print(f"item {item}: {rep['subject']} ({rep['profile']}) "
+          f"{rep['n_stored']}/{rep['n_files']} files, "
+          f"{rep['total_bytes']/1e6:.1f}MB -> {rep['stored_bytes']/1e6:.1f}MB "
+          f"= {rep['total_bytes']/max(rep['stored_bytes'],1):.2f}x")
+    if rep["omitted"]:
+        print(f"  omitted {len(rep['omitted'])} files (listed with hashes in the manifest)")
+
+
+def cmd_recon_restore(a) -> None:
+    with MindFile.open(a.file) as mf:
+        rep = _reconall.restore_subject(mf, a.item, a.dest)
+    print(f"{rep['status']}: restored {rep['restored']} files to {rep['dest']}")
+    if rep["failed"]:
+        print("  FAILED:", ", ".join(rep["failed"]))
+    sys.exit(0 if rep["status"] == "ok" else 1)
+
+
+def cmd_recon_files(a) -> None:
+    with MindFile.open(a.file) as mf:
+        rows = _reconall.list_files(mf, a.item)
+    for r in rows:
+        print(f"  {r['size']/1e6:8.2f}MB -> {r['code_bytes']/1e6:7.3f}MB  "
+              f"{r['codec']:22s} {r['relpath']}")
+    print(f"{len(rows)} files")
+
+
+def cmd_recon_verify(a) -> None:
+    with MindFile.open(a.file) as mf:
+        rep = _reconall.verify_files(mf, deep=a.deep)
+        tree = _reconall.verify_tree(mf, a.item) if a.item else None
+    _pj({"files": rep, "tree": tree})
+    ok = rep["status"] == "ok" and (tree is None or tree["status"] == "ok")
+    sys.exit(0 if ok else 1)
+
+
 def cmd_audit(a) -> None:
     with MindFile.open(a.file) as mf:
         rep = _audit.audit(mf, deep=a.deep)
@@ -414,6 +464,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--k", type=int, default=5); sp.set_defaults(func=cmd_retrieve)
 
     sp = sub.add_parser("validate"); sp.add_argument("file"); sp.set_defaults(func=cmd_validate)
+
+    sp = sub.add_parser("recon-store", help="fold a FreeSurfer recon-all subject tree in")
+    sp.add_argument("file"); sp.add_argument("subject_dir")
+    sp.add_argument("--profile", default="lossless", choices=sorted(_reconall.PROFILES))
+    sp.add_argument("--effort", default="balanced", choices=("fast", "balanced", "max"))
+    sp.add_argument("--subject-id", dest="subject_id")
+    sp.add_argument("-v", "--verbose", action="store_true")
+    sp.set_defaults(func=cmd_recon_store)
+
+    sp = sub.add_parser("recon-restore", help="write a stored subject tree back out")
+    sp.add_argument("file"); sp.add_argument("dest")
+    sp.add_argument("--item", type=int, required=True); sp.set_defaults(func=cmd_recon_restore)
+
+    sp = sub.add_parser("recon-files", help="list the stored files of a subject")
+    sp.add_argument("file"); sp.add_argument("--item", type=int, required=True)
+    sp.set_defaults(func=cmd_recon_files)
+
+    sp = sub.add_parser("recon-verify", help="re-check stored files (and the file set)")
+    sp.add_argument("file"); sp.add_argument("--item", type=int)
+    sp.add_argument("--deep", action="store_true"); sp.set_defaults(func=cmd_recon_verify)
 
     sp = sub.add_parser("audit"); sp.add_argument("file")
     sp.add_argument("--deep", action="store_true"); sp.set_defaults(func=cmd_audit)

@@ -124,9 +124,42 @@ def _wfdb(mf, it):
     return chs + _band_summary(mf, it, "wfdb_spectral", ["low", "mid", "high"])
 
 
+def _reconall(mf, it):
+    from . import reconall
+    try:
+        man = json.loads(_decode(it["payload"]))
+    except Exception:
+        return "recon-all subject"
+    ratio = man["total_bytes"] / max(man["stored_bytes"], 1)
+    head = (f"FreeSurfer recon-all subject '{man['subject']}' ({man['profile']}); "
+            f"{man['n_stored']}/{man['n_files']} files, "
+            f"{man['total_bytes']/1e6:.0f}MB stored in {man['stored_bytes']/1e6:.0f}MB "
+            f"({ratio:.2f}x)")
+    try:
+        st = reconall.read_stats(mf, it["id"])
+    except Exception:
+        return head
+    bits = []
+    aseg = st.get("aseg")
+    if aseg:
+        m = aseg["measures"]
+        if m.get("eTIV") or m.get("ICV"):
+            bits.append(f"eTIV {(m.get('eTIV') or m['ICV'])/1000:.0f}cm3")
+        if m.get("CortexVol"):
+            bits.append(f"cortical GM {m['CortexVol']/1000:.0f}cm3")
+        for side, key in (("L", "Left-Hippocampus"), ("R", "Right-Hippocampus")):
+            if aseg["structures"].get(key):
+                bits.append(f"{side} hippocampus {aseg['structures'][key]:.0f}mm3")
+    for hemi in ("lh", "rh"):
+        mt = (st.get(hemi) or {}).get("measures", {}).get("MeanThickness")
+        if mt:
+            bits.append(f"{hemi} mean thickness {mt:.2f}mm")
+    return head + ("; " + ", ".join(bits) if bits else "")
+
+
 _RENDERERS = {"eeg": _eeg, "ecg": _ecg, "mri": _mri, "text": _text, "labs": _labs,
               "tabular": _labs, "genomics": _genomics, "fhir": _fhir, "dicom": _dicom,
-              "wfdb": _wfdb}
+              "wfdb": _wfdb, "reconall": _reconall}
 
 
 def register_renderer(modality: str, fn) -> None:

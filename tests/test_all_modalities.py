@@ -7,9 +7,28 @@ import pytest
 from mindfile import MindFile, audit, checkpoint, lazy, modality, render, sign
 
 
-def _samples():
+def _reconall_subject(tmp_path):
+    """A minimal recon-all-shaped subject directory (stats drive its vector)."""
+    root = tmp_path / "fs_subject"
+    (root / "stats").mkdir(parents=True)
+    (root / "stats" / "aseg.stats").write_text(
+        "# Measure Cortex, CortexVol, Total cortical gray matter volume, 500228.3, mm^3\n"
+        "# Measure EstimatedTotalIntraCranialVol, eTIV, Estimated Total Intracranial "
+        "Volume, 1700000.0, mm^3\n"
+        "  1  17  4200  4200.0  Left-Hippocampus   60.1\n"
+        "  2  53  4310  4310.0  Right-Hippocampus  61.2\n")
+    (root / "stats" / "lh.aparc.stats").write_text(
+        "# Measure Cortex, MeanThickness, Mean Thickness, 2.40686, mm\n"
+        "cuneus  3810  2446  6756  2.539 0.509\n")
+    (root / "scripts").mkdir()
+    (root / "scripts" / "recon-all.log").write_text("recon-all finished\n" * 50)
+    return root
+
+
+def _samples(tmp_path):
     rng = np.random.default_rng(0)
     return {
+        "reconall": (_reconall_subject(tmp_path), {}),
         "eeg": (rng.normal(size=(8, 2000)).astype("float32"),
                 dict(sfreq=250.0, ch_names=["FP1", "FP2", "C3", "C4", "P3", "P4", "O1", "O2"])),
         "ecg": (rng.normal(size=(2, 2000)).astype("float32"), dict(sfreq=250.0, ch_names=["II", "V"])),
@@ -38,8 +57,8 @@ def test_every_registered_modality_has_metadata_and_card():
         assert r["spaces"] and r["extensions"], f"{m} missing spaces/extensions metadata"
 
 
-def test_all_modalities_compose_in_one_file(mind_path):
-    samples = _samples()
+def test_all_modalities_compose_in_one_file(mind_path, tmp_path):
+    samples = _samples(tmp_path)
     assert set(samples) == set(modality.processors())      # covers EVERY registered type
 
     mf = MindFile.create(mind_path, modality="multi")
